@@ -137,14 +137,14 @@ class CausalWanSelfAttention(nn.Module):
             local_start_index = local_end_index - num_new_tokens
             kv_cache["k"][:, local_start_index:local_end_index] = roped_key
             kv_cache["v"][:, local_start_index:local_end_index] = v
-        
+
         k_cache = kv_cache["k"][:, max(0, local_end_index - max_attention_size):local_end_index]
         v_cache = kv_cache["v"][:, max(0, local_end_index - max_attention_size):local_end_index]
-        x = attention(roped_query, k_cache, v_cache)    
+        x = attention(roped_query, k_cache, v_cache)
 
         kv_cache["global_end_index"].fill_(current_end)
         kv_cache["local_end_index"].fill_(local_end_index)
-        
+
         # output
         x = x.flatten(2)
         x = self.o(x)
@@ -164,14 +164,14 @@ class WanCrossAttention(WanSelfAttention):
 
         # compute query, key, value
         q = self.norm_q(self.q(x)).view(b, -1, n, d)
-        
+
         if crossattn_cache is not None:
-            if not crossattn_cache.get("is_init", False):
-                crossattn_cache["is_init"] = True
+            if crossattn_cache["is_init"].item() == 0:
+                crossattn_cache["is_init"].fill_(1)
                 k = self.norm_k(self.k(context)).view(b, -1, n, d)
                 v = self.v(context).view(b, -1, n, d)
-                crossattn_cache["k"] = k
-                crossattn_cache["v"] = v
+                crossattn_cache["k"].copy_(k)
+                crossattn_cache["v"].copy_(v)
             else:
                 k = crossattn_cache["k"]
                 v = crossattn_cache["v"]
@@ -210,11 +210,11 @@ class CausalWanAttentionBlock(nn.Module):
 
         # layers
         self.norm1 = WanLayerNorm(dim, eps)
-        self.self_attn = CausalWanSelfAttention(dim=dim, 
-                                                num_heads=num_heads, 
-                                                local_attn_size=local_attn_size, 
-                                                sink_size=sink_size, 
-                                                qk_norm=qk_norm, 
+        self.self_attn = CausalWanSelfAttention(dim=dim,
+                                                num_heads=num_heads,
+                                                local_attn_size=local_attn_size,
+                                                sink_size=sink_size,
+                                                qk_norm=qk_norm,
                                                 eps=eps)
         self.norm3 = WanLayerNorm(
             dim, eps,
@@ -227,7 +227,7 @@ class CausalWanAttentionBlock(nn.Module):
 
         # modulation
         self.modulation = nn.Parameter(torch.randn(1, 6, dim) / dim**0.5)
-        
+
         self.cam_injector_layer1 = nn.Linear(dim, dim)
         self.cam_injector_layer2 = nn.Linear(dim, dim)
         self.cam_scale_layer = nn.Linear(dim, dim)
@@ -419,12 +419,12 @@ class WanModelFast(ModelMixin, ConfigMixin):
         # embeddings
         self.patch_embedding = nn.Conv3d(
             in_dim, dim, kernel_size=patch_size, stride=patch_size)
-        
+
         self.patch_embedding_wancamctrl = nn.Linear(
             control_dim * 64 * patch_size[0] * patch_size[1] * patch_size[2], dim)
         self.c2ws_hidden_states_layer1 = nn.Linear(dim, dim)
         self.c2ws_hidden_states_layer2 = nn.Linear(dim, dim)
-        
+
         self.text_embedding = nn.Sequential(
             nn.Linear(text_dim, dim), nn.GELU(approximate='tanh'),
             nn.Linear(dim, dim))
@@ -436,7 +436,7 @@ class WanModelFast(ModelMixin, ConfigMixin):
 
         # blocks
         self.blocks = nn.ModuleList([
-            CausalWanAttentionBlock(dim, ffn_dim, num_heads, 
+            CausalWanAttentionBlock(dim, ffn_dim, num_heads,
                                     local_attn_size, sink_size, qk_norm, cross_attn_norm, eps)
             for _ in range(num_layers)
         ])
@@ -511,7 +511,7 @@ class WanModelFast(ModelMixin, ConfigMixin):
 
         if self.model_type == 'i2v':
             assert y is not None
-        
+
         # params
         device = self.patch_embedding.weight.device
         if self.freqs.device != device:

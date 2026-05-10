@@ -6,7 +6,7 @@ from einops import rearrange
 from ..modules.attention import flash_attention
 from ..modules.model import sinusoidal_embedding_1d
 from .ulysses import distributed_attention
-from .util import gather_forward, get_rank, get_world_size
+from .util import all_to_all, gather_forward, get_rank, get_world_size
 
 
 def pad_freqs(original_tensor, target_len):
@@ -277,9 +277,10 @@ def sp_dit_forward_causal(
     max_attention_size: Maximum number of KV tokens each query can attend to. Limits the
                         effective context window of self-attention to control memory usage.
 
-    Note: This function uses pure Ulysses attention (head splitting only).
-    Each GPU processes the full sequence but only a subset of attention heads.
-    Hence, it is the same with forward method in model_fast.py.
+    Note: This function uses sequence parallel (SP) with Ulysses attention.
+    The sequence is chunked across GPUs. Inside attention, all-to-all redistributes
+    from sequence-parallel to head-parallel, applies causal RoPE on the full sequence,
+    updates the KV cache, runs attention, then all-to-all back.
     """
 
     assert len(x) == 1
@@ -303,15 +304,22 @@ def sp_dit_forward_causal(
     assert seq_lens.max() <= seq_len
     x = torch.cat(x)
 
+    # Pad sequence to be divisible by world_size for SP chunking
+    sp_size = get_world_size()
+    padded_seq_lens = int((seq_lens + sp_size - 1) // sp_size * sp_size)
+    sp_pad_len = padded_seq_lens - int(seq_lens)
+    if sp_pad_len > 0:
+        x = torch.cat([x, x.new_zeros(x.size(0), sp_pad_len, x.size(2))], dim=1)
+
     # time embeddings
     if t.dim() == 1:
-        t = t.expand(t.size(0), seq_lens)
+        t = t.expand(t.size(0), padded_seq_lens)
     with torch.amp.autocast('cuda', dtype=torch.float32):
         bt = t.size(0)
         t = t.flatten()
         e = self.time_embedding(
             sinusoidal_embedding_1d(self.freq_dim,
-                                    t).unflatten(0, (bt, seq_lens)).float())
+                                    t).unflatten(0, (bt, padded_seq_lens)).float())
         e0 = self.time_projection(e).unflatten(2, (6, self.dim))
         assert e.dtype == torch.float32 and e0.dtype == torch.float32
 
@@ -343,11 +351,24 @@ def sp_dit_forward_causal(
         c2ws_plucker_emb = c2ws_plucker_emb + c2ws_hidden_states
 
         cam_len = c2ws_plucker_emb.size(1)
-        if cam_len > seq_lens:
-            c2ws_plucker_emb = c2ws_plucker_emb[:, :seq_lens, :]
+        if cam_len < padded_seq_lens:
+            pad_len_cam = padded_seq_lens - cam_len
+            pad = c2ws_plucker_emb.new_zeros(
+                c2ws_plucker_emb.size(0), pad_len_cam, c2ws_plucker_emb.size(2))
+            c2ws_plucker_emb = torch.cat([c2ws_plucker_emb, pad], dim=1)
+        elif cam_len > padded_seq_lens:
+            c2ws_plucker_emb = c2ws_plucker_emb[:, :padded_seq_lens, :]
 
+        if get_world_size() > 1:
+            c2ws_plucker_emb = torch.chunk(
+                c2ws_plucker_emb, get_world_size(), dim=1)[get_rank()]
         dit_cond_dict = dict(dit_cond_dict)
         dit_cond_dict["c2ws_plucker_emb"] = c2ws_plucker_emb
+
+    # Context Parallel
+    x = torch.chunk(x, get_world_size(), dim=1)[get_rank()]
+    e = torch.chunk(e, get_world_size(), dim=1)[get_rank()]
+    e0 = torch.chunk(e0, get_world_size(), dim=1)[get_rank()]
 
     kwargs = dict(
         e=e0,
@@ -372,6 +393,9 @@ def sp_dit_forward_causal(
     # head
     x = self.head(x, e)
 
+    # Context Parallel
+    x = gather_forward(x, dim=1)
+
     # unpatchify
     x = self.unpatchify(x, grid_sizes)
 
@@ -388,11 +412,18 @@ def sp_attn_forward_causal(
     current_start=0,
     max_attention_size=1_000_000):
     r"""
-    Sequence-parallel causal self-attention using Ulysses head splitting.
+    Sequence-parallel causal self-attention using Ulysses all-to-all.
+
+    Input x is sequence-chunked (each GPU holds padded_seq_lens/world_size tokens).
+    all-to-all gathers the full sequence and scatters heads, so each GPU
+    operates on the full sequence with local_heads.  After RoPE, padding
+    tokens are sliced off so that only the actual ``seq_lens`` tokens enter
+    the KV cache and flash attention.  The output is padded back to
+    ``padded_seq_lens`` before the reverse all-to-all.
 
     Args:
-        x(Tensor):              Shape [B, L, C]
-        seq_lens(Tensor):       Number of valid tokens per sample.
+        x(Tensor):              Shape [B, padded_seq_lens // world_size, C]
+        seq_lens(Tensor):       Total number of valid tokens (full sequence, not per-rank).
         grid_sizes(Tensor):     Shape [B, 3], the second dimension contains (F, H, W).
         freqs(Tensor):          Rope freqs, shape [1024, C / num_heads / 2].
         kv_cache(dict):         Self-attention KV cache. Contains keys ``k``, ``v``
@@ -408,8 +439,6 @@ def sp_attn_forward_causal(
     """
     b, s, n, d = *x.shape[:2], self.num_heads, self.head_dim
     sp_size = get_world_size()
-    rank = get_rank()
-    local_heads = n // sp_size
 
     # query, key, value function
     def qkv_fn(x):
@@ -420,15 +449,29 @@ def sp_attn_forward_causal(
 
     q, k, v = qkv_fn(x)
 
+    # all-to-all: gather sequence, scatter heads
+    # [B, s/p, N, d] -> [B, s, N/p, d]
+    q = all_to_all(q, scatter_dim=2, gather_dim=1)
+    k = all_to_all(k, scatter_dim=2, gather_dim=1)
+    v = all_to_all(v, scatter_dim=2, gather_dim=1)
+
+    # padded_seq_lens = s * sp_size may exceed seq_lens due to SP padding
+    padded_seq_lens = s * sp_size
+    seq_lens_int = int(seq_lens)
+
     frame_seqlen = math.prod(grid_sizes[0][1:]).item()
     current_start_frame = current_start // frame_seqlen
 
-    q_local = q[:, :, rank * local_heads:(rank + 1) * local_heads, :]  # [B, s, local_heads, d]
-    k_local = k[:, :, rank * local_heads:(rank + 1) * local_heads, :]
-    v_local = v[:, :, rank * local_heads:(rank + 1) * local_heads, :]
+    # Apply causal RoPE on full (padded) sequence with local heads
+    # causal_rope_apply only processes the first f*h*w tokens internally,
+    # leaving any SP padding tokens unchanged
+    query = causal_rope_apply(q, grid_sizes, freqs, start_frame=current_start_frame).type_as(v)
+    key   = causal_rope_apply(k, grid_sizes, freqs, start_frame=current_start_frame).type_as(v)
 
-    query = causal_rope_apply(q_local, grid_sizes, freqs, start_frame=current_start_frame).type_as(v_local)
-    key   = causal_rope_apply(k_local, grid_sizes, freqs, start_frame=current_start_frame).type_as(v_local)
+    # Slice to actual seq_lens — discard SP padding for cache and attention
+    query = query[:, :seq_lens_int]
+    key = key[:, :seq_lens_int]
+    v = v[:, :seq_lens_int]
 
     current_end = current_start + seq_lens
     kv_cache_size = kv_cache["k"].shape[1]
@@ -449,25 +492,35 @@ def sp_attn_forward_causal(
             kv_cache["global_end_index"].item() - num_evicted_tokens
         local_start_index = local_end_index - seq_lens
         kv_cache["k"][:, local_start_index:local_end_index] = key
-        kv_cache["v"][:, local_start_index:local_end_index] = v_local
+        kv_cache["v"][:, local_start_index:local_end_index] = v
     else:
         # Assign new keys/values directly up to current_end
         local_end_index = kv_cache["local_end_index"].item() + current_end - kv_cache["global_end_index"].item()
         local_start_index = local_end_index - seq_lens
         kv_cache["k"][:, local_start_index:local_end_index] = key
-        kv_cache["v"][:, local_start_index:local_end_index] = v_local
+        kv_cache["v"][:, local_start_index:local_end_index] = v
 
     k_cache = kv_cache["k"][:, max(0, local_end_index - max_attention_size):local_end_index]
     v_cache = kv_cache["v"][:, max(0, local_end_index - max_attention_size):local_end_index]
 
     # Attention on local heads, full key/value cache for this rank
-    x_local = flash_attention(query, k_cache, v_cache)  # [B, s, local_heads, d]
-
-    # Gather all head results across GPUs: [B, s, n, d]
-    x_full = gather_forward(x_local, dim=2)  # all_gather on head dim
+    x_local = flash_attention(query, k_cache, v_cache)  # [B, seq_lens, local_heads, d]
 
     kv_cache["global_end_index"].fill_(current_end)
     kv_cache["local_end_index"].fill_(local_end_index)
+
+    # Pad back to padded_seq_lens for all-to-all
+    local_heads = x_local.size(2)
+    sp_pad = padded_seq_lens - seq_lens_int
+    if sp_pad > 0:
+        x_local = torch.cat([
+            x_local,
+            x_local.new_zeros(b, sp_pad, local_heads, d)
+        ], dim=1)
+
+    # all-to-all back: gather heads, scatter sequence
+    # [B, s, N/p, d] -> [B, s/p, N, d]
+    x_full = all_to_all(x_local, scatter_dim=1, gather_dim=2)
 
     # output
     x_full = x_full.flatten(2)

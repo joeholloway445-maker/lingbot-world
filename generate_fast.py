@@ -155,6 +155,16 @@ def _parse_args():
         default=False,
         help="Whether to convert model paramerters dtype.")
     parser.add_argument(
+        "--local_attn_size",
+        type=int,
+        default=-1,
+        help='The local size of kv cache during inference')
+    parser.add_argument(
+        "--sink_size",
+        type=int,
+        default=0,
+        help='The sink size of kv cache during inference')
+    parser.add_argument(
         "--max_attention_size",
         type=int,
         default=None,
@@ -243,7 +253,7 @@ def generate(args):
             dist.broadcast_object_list(input_prompt, src=0)
         args.prompt = input_prompt[0]
         logging.info(f"Extended prompt: {args.prompt}")
-    
+
     logging.info("Creating WanI2VFast pipeline.")
     wan_i2v = wan.WanI2VFast(
         config=cfg,
@@ -255,6 +265,8 @@ def generate(args):
         use_sp=(args.ulysses_size > 1),
         t5_cpu=args.t5_cpu,
         convert_model_dtype=args.convert_model_dtype,
+        local_attn_size=args.local_attn_size,
+        sink_size=args.sink_size
     )
     logging.info("Generating video ...")
     video = wan_i2v.generate(

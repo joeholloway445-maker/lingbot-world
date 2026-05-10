@@ -46,7 +46,9 @@ class WanI2VFast:
         t5_cpu=False,
         init_on_cpu=True,
         convert_model_dtype=False,
-        pipe_dtype: torch.dtype = torch.bfloat16,
+        pipe_dtype=torch.bfloat16,
+        local_attn_size=-1,
+        sink_size=0,
     ):
         r"""
         Initializes the image-to-video generation model components.
@@ -84,6 +86,8 @@ class WanI2VFast:
         self.boundary = config.boundary
         self.param_dtype = config.param_dtype
         self.pipe_dtype = pipe_dtype
+        self.local_attn_size = local_attn_size
+        self.sink_size = sink_size
 
         if t5_fsdp or dit_fsdp or use_sp:
             self.init_on_cpu = False
@@ -111,7 +115,13 @@ class WanI2VFast:
 
         logging.info(f"Creating WanModelFast from {checkpoint_dir}")
         self.model = WanModelFast.from_pretrained(
-            checkpoint_dir, subfolder=config.fast_noise_checkpoint, torch_dtype=torch.bfloat16, control_type=self.control_type)
+            checkpoint_dir,
+            subfolder=config.fast_noise_checkpoint,
+            torch_dtype=torch.bfloat16,
+            control_type=self.control_type,
+            local_attn_size=self.local_attn_size,
+            sink_size=self.sink_size)
+
         self.model = self._configure_model(
             model=self.model,
             use_sp=use_sp,
@@ -181,7 +191,7 @@ class WanI2VFast:
         flow_pred: the prediction with shape [B, C, F, H, W]
         xt: the input noisy data with shape [B, C, F, H, W]
         timestep: the timestep with shape [B]
-    
+
         pred = noise - x0
         x_t = (1-sigma_t) * x0 + sigma_t * noise
         we have x0 = x_t - sigma_t * pred
@@ -194,7 +204,7 @@ class WanI2VFast:
         timestep_id = torch.argmin((timesteps - timestep).abs())
         sigma_t = sigmas[timestep_id].reshape(-1, 1, 1, 1)
         x0_pred = xt - sigma_t * flow_pred
-    
+
         return x0_pred.to(original_dtype)
 
 
@@ -330,7 +340,7 @@ class WanI2VFast:
                                     height_final=h,
                                     width_final=w)
             Ks = Ks[0]
-            
+
             len_c2ws = len(c2ws)
             len_c2ws_ = int((len_c2ws - 1) // 4) + 1
             len_c2ws_ = int(len_c2ws_ - (len_c2ws_ % chunk_size))
@@ -370,7 +380,7 @@ class WanI2VFast:
                 wasd_action_tensor = wasd_action_tensor[None, ...] # [b, f*h*w, c]
                 wasd_action_tensor = rearrange(wasd_action_tensor, 'b (f h w) c -> b c f h w', f=lat_f, h=lat_h, w=lat_w).to(self.param_dtype)
                 c2ws_plucker_emb = torch.cat([c2ws_plucker_emb, wasd_action_tensor], dim=1)
-        
+
         y = self.vae.encode([
             torch.concat([
                 torch.nn.functional.interpolate(
@@ -392,7 +402,10 @@ class WanI2VFast:
         model_args = self.model.config
         transformer_dtype = self.pipe_dtype
         frame_seqlen = int(noise.shape[-2] * noise.shape[-1]// 4)
-        kv_size = frame_seqlen * lat_f
+        if self.local_attn_size > -1:
+            kv_size = frame_seqlen * self.local_attn_size
+        else:
+            kv_size = frame_seqlen * lat_f
         head_dim = model_args.dim // model_args.num_heads
         local_num_heads = model_args.num_heads // self.sp_size
         self_kv_shape = [batch_size, kv_size, local_num_heads, head_dim]
@@ -426,7 +439,7 @@ class WanI2VFast:
                 dit_cond_dict = {
                     "c2ws_plucker_emb": current_c2ws_plucker_emb.chunk(1, dim=0),
                 }
-    
+
                 kwargs = {
                     'context': [context[0]],
                     'seq_len': max_seq_len,
@@ -444,15 +457,15 @@ class WanI2VFast:
                 for timestep_idx in range(len(timesteps)):
                     latent_model_input = [current_latent.to(self.device)]
                     current_timestep = [timesteps[timestep_idx]]
-    
+
                     timestep = torch.stack(current_timestep).to(self.device)
-                 
+
                     noise_pred = self.model(
                         x=latent_model_input, t=timestep, **kwargs)[0]
 
                     if offload_model:
                         torch.cuda.empty_cache()
-                    
+
                     x0 = self._convert_flow_pred_to_x0(
                         flow_pred=noise_pred,
                         xt=current_latent,
@@ -511,14 +524,14 @@ class WanI2VFast:
 
     def _initialize_crossattn_cache(self, num_layers, shape, dtype, device):
         """
-        Initialize a Per-GPU cross-attention cache for the CrossAttb
+        Initialize a per-GPU cross-attention cache.
         """
         crossattn_cache = []
         for _ in range(num_layers):
             crossattn_cache.append({
                 'k': torch.zeros(shape, dtype=dtype, device=device),
                 'v': torch.zeros(shape, dtype=dtype, device=device),
-                'is_init': False
+                'is_init': torch.tensor(0, dtype=torch.int32, device=device),
             })
 
         return crossattn_cache
