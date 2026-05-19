@@ -156,12 +156,17 @@ class CausalWanSelfAttention(nn.Module):
 
 class WanCrossAttention(WanSelfAttention):
 
-    def forward(self, x, context, context_lens, crossattn_cache=None):
+    def forward(self, x, context, context_lens, crossattn_cache=None,
+                cross_attn_first_call=None):
         r"""
         Args:
             x(Tensor): Shape [B, L1, C]
             context(Tensor): Shape [B, L2, C]
             context_lens(Tensor): Shape [B]
+            cross_attn_first_call(bool, optional): If provided, used as the
+                "first call this generation" gate instead of reading
+                crossattn_cache["is_init"].item() (which forces a CPU↔GPU
+                sync). Caller (pipeline) tracks this as a Python bool.
         """
         b, n, d = x.size(0), self.num_heads, self.head_dim
 
@@ -169,7 +174,11 @@ class WanCrossAttention(WanSelfAttention):
         q = self.norm_q(self.q(x)).view(b, -1, n, d)
 
         if crossattn_cache is not None:
-            if crossattn_cache["is_init"].item() == 0:
+            if cross_attn_first_call is None:
+                is_first = crossattn_cache["is_init"].item() == 0
+            else:
+                is_first = cross_attn_first_call
+            if is_first:
                 crossattn_cache["is_init"].fill_(1)
                 k = self.norm_k(self.k(context)).view(b, -1, n, d)
                 v = self.v(context).view(b, -1, n, d)
@@ -251,6 +260,7 @@ class CausalWanAttentionBlock(nn.Module):
         current_start=0,
         max_attention_size=1_000_000,
         frame_seqlen=None,
+        cross_attn_first_call=None,
     ):
         r"""
         Args:
@@ -281,16 +291,19 @@ class CausalWanAttentionBlock(nn.Module):
             x = (1.0 + cam_scale) * x + cam_shift
 
         # cross-attention & ffn function
-        def cross_attn_ffn(x, context, context_lens, e, crossattn_cache=None):
-            x = x + self.cross_attn(self.norm3(x), context, context_lens, 
-                                    crossattn_cache=crossattn_cache)
+        def cross_attn_ffn(x, context, context_lens, e, crossattn_cache=None,
+                           cross_attn_first_call=None):
+            x = x + self.cross_attn(self.norm3(x), context, context_lens,
+                                    crossattn_cache=crossattn_cache,
+                                    cross_attn_first_call=cross_attn_first_call)
             y = self.ffn(
                 self.norm2(x).float() * (1 + e[4].squeeze(2)) + e[3].squeeze(2))
             with torch.amp.autocast('cuda', dtype=torch.float32):
                 x = x + y * e[5].squeeze(2)
             return x
 
-        x = cross_attn_ffn(x, context, context_lens, e, crossattn_cache)
+        x = cross_attn_ffn(x, context, context_lens, e, crossattn_cache,
+                           cross_attn_first_call=cross_attn_first_call)
         return x
 
 
@@ -475,6 +488,7 @@ class WanModelFast(ModelMixin, ConfigMixin):
         current_start=0,
         max_attention_size=1_000_000,
         frame_seqlen=None,
+        cross_attn_first_call=None,
     ):
         r"""
         Run the diffusion model with kv caching.
@@ -587,7 +601,8 @@ class WanModelFast(ModelMixin, ConfigMixin):
             context_lens=context_lens,
             dit_cond_dict=dit_cond_dict,
             max_attention_size=max_attention_size,
-            frame_seqlen=frame_seqlen)
+            frame_seqlen=frame_seqlen,
+            cross_attn_first_call=cross_attn_first_call)
 
         for block_index, block in enumerate(self.blocks):
             kwargs.update(

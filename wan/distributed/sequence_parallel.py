@@ -259,6 +259,7 @@ def sp_dit_forward_causal(
     current_start=0,
     max_attention_size=1_000_000,
     frame_seqlen=None,
+    cross_attn_first_call=None,
 ):
     """
     x:                  A list of videos each with shape [C, T, H, W].
@@ -380,7 +381,8 @@ def sp_dit_forward_causal(
         context_lens=context_lens,
         dit_cond_dict=dit_cond_dict,
         max_attention_size=max_attention_size,
-        frame_seqlen=frame_seqlen)
+        frame_seqlen=frame_seqlen,
+        cross_attn_first_call=cross_attn_first_call)
 
     for block_index, block in enumerate(self.blocks):
         kwargs.update(
