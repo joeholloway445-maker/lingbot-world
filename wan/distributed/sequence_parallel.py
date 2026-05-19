@@ -306,10 +306,14 @@ def sp_dit_forward_causal(
     assert seq_lens.max() <= seq_len
     x = torch.cat(x)
 
-    # Pad sequence to be divisible by world_size for SP chunking
+    # Pad sequence to be divisible by world_size for SP chunking.
+    # int(seq_lens) is one cudaStreamSynchronize; cache it once so each
+    # attention layer can reuse via the seq_lens_int kwarg instead of
+    # re-casting per-layer (32x).
     sp_size = get_world_size()
-    padded_seq_lens = int((seq_lens + sp_size - 1) // sp_size * sp_size)
-    sp_pad_len = padded_seq_lens - int(seq_lens)
+    seq_lens_int = int(seq_lens)
+    padded_seq_lens = ((seq_lens_int + sp_size - 1) // sp_size) * sp_size
+    sp_pad_len = padded_seq_lens - seq_lens_int
     if sp_pad_len > 0:
         x = torch.cat([x, x.new_zeros(x.size(0), sp_pad_len, x.size(2))], dim=1)
 
@@ -382,7 +386,8 @@ def sp_dit_forward_causal(
         dit_cond_dict=dit_cond_dict,
         max_attention_size=max_attention_size,
         frame_seqlen=frame_seqlen,
-        cross_attn_first_call=cross_attn_first_call)
+        cross_attn_first_call=cross_attn_first_call,
+        seq_lens_int=seq_lens_int)
 
     for block_index, block in enumerate(self.blocks):
         kwargs.update(
@@ -415,7 +420,8 @@ def sp_attn_forward_causal(
     kv_cache=None,
     current_start=0,
     max_attention_size=1_000_000,
-    frame_seqlen=None):
+    frame_seqlen=None,
+    seq_lens_int=None):
     r"""
     Sequence-parallel causal self-attention using Ulysses all-to-all.
 
@@ -462,7 +468,8 @@ def sp_attn_forward_causal(
 
     # padded_seq_lens = s * sp_size may exceed seq_lens due to SP padding
     padded_seq_lens = s * sp_size
-    seq_lens_int = int(seq_lens)
+    if seq_lens_int is None:
+        seq_lens_int = int(seq_lens)
 
     if frame_seqlen is None:
         frame_seqlen = math.prod(grid_sizes[0][1:]).item()

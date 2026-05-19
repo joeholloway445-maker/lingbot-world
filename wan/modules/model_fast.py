@@ -87,6 +87,7 @@ class CausalWanSelfAttention(nn.Module):
         current_start=0,
         max_attention_size=1_000_000,
         frame_seqlen=None,
+        seq_lens_int=None,
     ):
         r"""
         Args:
@@ -95,7 +96,10 @@ class CausalWanSelfAttention(nn.Module):
             freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
             frame_seqlen(int, optional): Pre-computed H*W/(patch_h*patch_w). If
                 provided, skips a `.item()` sync on `grid_sizes`.
+            seq_lens_int(int, optional): Accepted for signature parity with
+                the SP path (sp_attn_forward_causal). Unused here.
         """
+        del seq_lens_int
         b, s, n, d = *x.shape[:2], self.num_heads, self.head_dim
 
         # query, key, value function
@@ -270,6 +274,7 @@ class CausalWanAttentionBlock(nn.Module):
         max_attention_size=1_000_000,
         frame_seqlen=None,
         cross_attn_first_call=None,
+        seq_lens_int=None,
     ):
         r"""
         Args:
@@ -286,7 +291,7 @@ class CausalWanAttentionBlock(nn.Module):
         y = self.self_attn(
             self.norm1(x).float() * (1 + e[1].squeeze(2)) + e[0].squeeze(2),
             seq_lens, grid_sizes, freqs, kv_cache, current_start, max_attention_size,
-            frame_seqlen=frame_seqlen)
+            frame_seqlen=frame_seqlen, seq_lens_int=seq_lens_int)
         with torch.amp.autocast('cuda', dtype=torch.float32):
             x = x + y * e[2].squeeze(2)
 
