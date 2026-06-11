@@ -370,7 +370,8 @@ def generate(args):
                 merge_video_audio(video_path=args.save_file, audio_path="tts.wav")
     del video
 
-    torch.cuda.synchronize()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
     if dist.is_initialized():
         dist.barrier()
         dist.destroy_process_group()

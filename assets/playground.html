@@ -1,0 +1,1236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LingBot-World Camera & Action Trajectory Designer</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --bg-color: #080c14;
+            --card-bg: rgba(17, 24, 39, 0.75);
+            --card-border: rgba(255, 255, 255, 0.08);
+            --text-color: #f3f4f6;
+            --text-muted: #9ca3af;
+            --primary: #06b6d4;
+            --primary-glow: rgba(6, 182, 212, 0.4);
+            --secondary: #a855f7;
+            --secondary-glow: rgba(168, 85, 247, 0.4);
+            --accent: #10b981;
+            --danger: #ef4444;
+            --font-main: 'Plus Jakarta Sans', sans-serif;
+            --font-code: 'Space Grotesk', monospace;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: var(--font-main);
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Ambient glowing background blobs */
+        .glow-blob {
+            position: absolute;
+            width: 400px;
+            height: 400px;
+            border-radius: 50%;
+            filter: blur(120px);
+            z-index: -1;
+            opacity: 0.12;
+            pointer-events: none;
+        }
+        .blob-1 {
+            top: -100px;
+            left: -100px;
+            background-color: var(--primary);
+        }
+        .blob-2 {
+            bottom: -100px;
+            right: -100px;
+            background-color: var(--secondary);
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 2rem;
+            background: rgba(8, 12, 20, 0.85);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--card-border);
+            z-index: 10;
+        }
+
+        .logo-section h1 {
+            font-size: 1.35rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.03em;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .logo-section span {
+            font-size: 0.72rem;
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--primary);
+            padding: 0.15rem 0.5rem;
+            border-radius: 10px;
+            font-family: var(--font-code);
+            border: 1px solid rgba(6, 182, 212, 0.2);
+        }
+
+        .main-container {
+            display: flex;
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .sidebar {
+            width: 360px;
+            background: rgba(10, 15, 26, 0.85);
+            backdrop-filter: blur(20px);
+            border-right: 1px solid var(--card-border);
+            display: flex;
+            flex-direction: column;
+            padding: 1.25rem;
+            gap: 1.25rem;
+            overflow-y: auto;
+            z-index: 5;
+        }
+
+        .viewport-container {
+            flex: 1;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            background: #020617;
+        }
+
+        .canvas3d {
+            width: 100%;
+            height: 100%;
+            display: block;
+            cursor: grab;
+        }
+        .canvas3d:active {
+            cursor: grabbing;
+        }
+
+        .overlay-card {
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--card-border);
+            border-radius: 14px;
+            padding: 1.1rem;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+        }
+
+        .section-title {
+            font-size: 0.88rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            margin-bottom: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        /* Controller Keyboard Layout */
+        .controls-ui {
+            display: flex;
+            justify-content: space-around;
+            gap: 1rem;
+        }
+
+        .kb-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .kb-group-title {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            font-family: var(--font-code);
+            margin-bottom: 0.2rem;
+        }
+
+        .kb-row {
+            display: flex;
+            gap: 0.35rem;
+        }
+
+        .key {
+            width: 38px;
+            height: 38px;
+            border-radius: 6px;
+            background: rgba(31, 41, 55, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-weight: 700;
+            font-family: var(--font-code);
+            font-size: 0.95rem;
+            color: var(--text-muted);
+            transition: all 0.12s ease;
+            user-select: none;
+        }
+
+        .key-wasd.active {
+            background: var(--primary);
+            color: #000;
+            border-color: var(--primary);
+            box-shadow: 0 0 12px var(--primary-glow);
+        }
+
+        .key-ijkl.active {
+            background: var(--secondary);
+            color: #fff;
+            border-color: var(--secondary);
+            box-shadow: 0 0 12px var(--secondary-glow);
+        }
+
+        /* Buttons & Actions */
+        .btn {
+            background: linear-gradient(135deg, var(--primary) 0%, #0891b2 100%);
+            border: none;
+            color: #000;
+            padding: 0.65rem 1.1rem;
+            border-radius: 8px;
+            font-weight: 700;
+            font-family: var(--font-main);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            width: 100%;
+        }
+
+        .btn:hover {
+            box-shadow: 0 0 12px var(--primary-glow);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            color: var(--text-color);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.08);
+            box-shadow: none;
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+        .btn-danger:hover {
+            box-shadow: 0 0 12px rgba(239, 68, 68, 0.4);
+        }
+
+        .recorder-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 0.8rem;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.5rem;
+        }
+
+        .stat-box {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            padding: 0.5rem;
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .stat-val {
+            font-size: 1.15rem;
+            font-weight: 700;
+            font-family: var(--font-code);
+            color: var(--primary);
+        }
+
+        .stat-lbl {
+            font-size: 0.6rem;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-top: 0.1rem;
+        }
+
+        .recording-indicator {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            background-color: var(--text-muted);
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .dot.recording {
+            background-color: var(--danger);
+            animation: pulse 1s infinite alternate;
+        }
+
+        @keyframes pulse {
+            from { opacity: 0.4; }
+            to { opacity: 1; transform: scale(1.2); }
+        }
+
+        /* Action DSL Text */
+        .dsl-textarea {
+            width: 100%;
+            height: 70px;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid var(--card-border);
+            border-radius: 8px;
+            color: var(--primary);
+            padding: 0.6rem;
+            font-family: var(--font-code);
+            font-size: 0.8rem;
+            resize: none;
+            outline: none;
+        }
+
+        .dsl-textarea:focus {
+            border-color: var(--primary);
+        }
+
+        /* Floating Viewport UI */
+        .viewport-overlay {
+            position: absolute;
+            top: 1.25rem;
+            left: 1.25rem;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+        }
+
+        .viewport-title {
+            font-size: 1.1rem;
+            font-weight: 800;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+        }
+
+        .viewport-sub {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+        }
+
+        .viewport-controls-hint {
+            position: absolute;
+            bottom: 1.25rem;
+            left: 1.25rem;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(8px);
+            padding: 0.4rem 0.8rem;
+            border-radius: 20px;
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            border: 1px solid var(--card-border);
+            pointer-events: none;
+        }
+
+        .io-section {
+            display: flex;
+            flex-direction: column;
+            gap: 0.6rem;
+        }
+
+        .input-text {
+            width: 100%;
+            padding: 0.65rem;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--card-border);
+            border-radius: 6px;
+            color: white;
+            font-family: var(--font-main);
+            outline: none;
+            font-size: 0.85rem;
+        }
+
+        .input-text:focus {
+            border-color: var(--primary);
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            background: rgba(16, 185, 129, 0.95);
+            color: black;
+            padding: 0.8rem 1.3rem;
+            border-radius: 8px;
+            font-weight: 700;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            z-index: 100;
+            transform: translateY(150%);
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            font-size: 0.85rem;
+        }
+        .toast.show {
+            transform: translateY(0);
+        }
+        .toast.error {
+            background: var(--danger);
+            color: white;
+        }
+
+        /* Timeline Slider */
+        .timeline-container {
+            position: absolute;
+            bottom: 1.25rem;
+            right: 1.25rem;
+            width: 280px;
+            background: rgba(10, 15, 26, 0.85);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--card-border);
+            padding: 0.8rem;
+            border-radius: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+        }
+
+        .slider-header {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            font-family: var(--font-code);
+        }
+
+        .timeline-slider {
+            width: 100%;
+            accent-color: var(--primary);
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="glow-blob blob-1"></div>
+    <div class="glow-blob blob-2"></div>
+
+    <header>
+        <div class="logo-section">
+            <h1>LingBot-World <span>Studio Playground</span></h1>
+        </div>
+        <div class="nav-links">
+            <span style="color: var(--text-muted); font-size: 0.8rem;">Offline-Ready Engine</span>
+        </div>
+    </header>
+
+    <div class="main-container">
+        <div class="sidebar">
+            <!-- Recorder Panel -->
+            <div class="overlay-card recorder-panel">
+                <div class="section-title">
+                    <span class="dot" id="record-dot"></span> Recorder
+                </div>
+                <div class="stats-grid">
+                    <div class="stat-box">
+                        <div class="stat-val" id="stat-frames">1</div>
+                        <div class="stat-lbl">Total Frames</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-val" id="stat-pad">1</div>
+                        <div class="stat-lbl">Padded (4n+1)</div>
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 0.4rem;">
+                    <button class="btn" id="btn-record">Start Recording</button>
+                    <button class="btn btn-secondary btn-danger" id="btn-clear" style="width: auto;">Reset</button>
+                </div>
+                <div style="margin-top: 0.6rem;">
+                    <label style="font-size: 0.7rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">Preset Trajectories</label>
+                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.35rem;">
+                        <button class="btn btn-secondary" style="padding: 0.4rem; font-size: 0.75rem;" onclick="loadPreset('soaring')">Soaring flight</button>
+                        <button class="btn btn-secondary" style="padding: 0.4rem; font-size: 0.75rem;" onclick="loadPreset('zoom')">Zoom Forward</button>
+                        <button class="btn btn-secondary" style="padding: 0.4rem; font-size: 0.75rem;" onclick="loadPreset('spiral')">Spiral Up</button>
+                        <button class="btn btn-secondary" style="padding: 0.4rem; font-size: 0.75rem;" onclick="loadPreset('circle')">Circle Turn</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Keyboard Display Panel -->
+            <div class="overlay-card">
+                <div class="section-title">Key Capture</div>
+                <div class="controls-ui">
+                    <div class="kb-group">
+                        <div class="kb-group-title">WASD (Move)</div>
+                        <div class="kb-row">
+                            <div class="key key-wasd" id="key-w">W</div>
+                        </div>
+                        <div class="kb-row">
+                            <div class="key key-wasd" id="key-a">A</div>
+                            <div class="key key-wasd" id="key-s">S</div>
+                            <div class="key key-wasd" id="key-d">D</div>
+                        </div>
+                    </div>
+                    <div class="kb-group">
+                        <div class="kb-group-title">IJKL (Rotate)</div>
+                        <div class="kb-row">
+                            <div class="key key-ijkl" id="key-i">I</div>
+                        </div>
+                        <div class="kb-row">
+                            <div class="key key-ijkl" id="key-j">J</div>
+                            <div class="key key-ijkl" id="key-k">K</div>
+                            <div class="key key-ijkl" id="key-l">L</div>
+                        </div>
+                    </div>
+                </div>
+                <div style="font-size: 0.65rem; color: var(--text-muted); margin-top: 0.8rem; line-height: 1.4;">
+                    <strong>W/S:</strong> Move Forward/Backward | <strong>A/D:</strong> Move Left/Right<br>
+                    <strong>I/K:</strong> Look Up/Down (Pitch) | <strong>J/L:</strong> Look Left/Right (Yaw)
+                </div>
+            </div>
+
+            <!-- DSL Generation -->
+            <div class="overlay-card">
+                <div class="section-title">Compact Action String (DSL)</div>
+                <textarea class="dsl-textarea" id="dsl-output" placeholder="e.g. w-10,j-5,s-15"></textarea>
+                <div style="display: flex; gap: 0.4rem; margin-top: 0.5rem;">
+                    <button class="btn btn-secondary" id="btn-parse-dsl">Apply Action String</button>
+                </div>
+            </div>
+
+            <!-- Export Panel -->
+            <div class="overlay-card io-section">
+                <div class="section-title">Export Trajectory</div>
+                <label style="font-size: 0.7rem; color: var(--text-muted);">Target Output Folder</label>
+                <input type="text" class="input-text" id="export-path" value="examples/custom_trajectory">
+                <button class="btn" id="btn-export">Export Arrays (NPY)</button>
+                <div style="font-size: 0.7rem; color: var(--text-muted); line-height: 1.4;" id="export-status">
+                    Numpy files will be saved in your project workspace.
+                </div>
+            </div>
+        </div>
+
+        <div class="viewport-container">
+            <div class="viewport-overlay">
+                <div class="viewport-title">Interactive 3D Preview</div>
+                <div class="viewport-sub">Drag left/right/up/down to rotate camera view | Scroll to zoom</div>
+            </div>
+
+            <div class="viewport-controls-hint">
+                Hold keyboard keys while Recording is ON to drive the camera!
+            </div>
+
+            <div class="timeline-container">
+                <div class="slider-header">
+                    <span>Timeline Preview</span>
+                    <span id="timeline-index">0 / 0</span>
+                </div>
+                <input type="range" class="timeline-slider" id="timeline" min="0" max="0" value="0">
+            </div>
+
+            <canvas class="canvas3d" id="viewport"></canvas>
+        </div>
+    </div>
+
+    <div class="toast" id="toast">Files saved successfully!</div>
+
+    <script>
+        // --- Trajectory Simulator logic matching wasd_ijkl_to_c2ws.py ---
+        class TrajectorySimulator {
+            constructor() {
+                this.reset();
+            }
+
+            reset() {
+                this.current_c2w = [
+                    [1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1]
+                ];
+                this.current_pitch = 0.0;
+                this.pitch_limit = 85 * Math.PI / 180;
+                this.rotate_speed_rad = 2 * Math.PI / 180;
+                this.move_speed = 0.05;
+                this.history = [JSON.parse(JSON.stringify(this.current_c2w))];
+            }
+
+            getRotationMatrix(axis, angle) {
+                let c = Math.cos(angle);
+                let s = Math.sin(angle);
+                if (axis === 'x') {
+                    return [
+                        [1, 0, 0],
+                        [0, c, -s],
+                        [0, s, c]
+                    ];
+                } else if (axis === 'y') {
+                    return [
+                        [c, 0, s],
+                        [0, 1, 0],
+                        [-s, 0, c]
+                    ];
+                } else if (axis === 'z') {
+                    return [
+                        [c, -s, 0],
+                        [s, c, 0],
+                        [0, 0, 1]
+                    ];
+                }
+                return [[1,0,0],[0,1,0],[0,0,1]];
+            }
+
+            matmul3x3(A, B) {
+                let C = [[0,0,0],[0,0,0],[0,0,0]];
+                for (let i = 0; i < 3; i++) {
+                    for (let j = 0; j < 3; j++) {
+                        C[i][j] = A[i][0]*B[0][j] + A[i][1]*B[1][j] + A[i][2]*B[2][j];
+                    }
+                }
+                return C;
+            }
+
+            step(keys) {
+                let R = [
+                    [this.current_c2w[0][0], this.current_c2w[0][1], this.current_c2w[0][2]],
+                    [this.current_c2w[1][0], this.current_c2w[1][1], this.current_c2w[1][2]],
+                    [this.current_c2w[2][0], this.current_c2w[2][1], this.current_c2w[2][2]]
+                ];
+                let T = [this.current_c2w[0][3], this.current_c2w[1][3], this.current_c2w[2][3]];
+
+                let pitch_delta = 0.0;
+                if (keys.has('i')) pitch_delta += this.rotate_speed_rad;
+                if (keys.has('k')) pitch_delta -= this.rotate_speed_rad;
+
+                let new_pitch = this.current_pitch + pitch_delta;
+                if (-this.pitch_limit <= new_pitch && new_pitch <= this.pitch_limit) {
+                    this.current_pitch = new_pitch;
+                } else {
+                    pitch_delta = 0.0;
+                }
+
+                let R_pitch = this.getRotationMatrix('x', pitch_delta);
+
+                let yaw_delta = 0.0;
+                if (keys.has('j')) yaw_delta -= this.rotate_speed_rad;
+                if (keys.has('l')) yaw_delta += this.rotate_speed_rad;
+                let R_yaw = this.getRotationMatrix('y', yaw_delta);
+
+                let R_new = this.matmul3x3(R_yaw, this.matmul3x3(R, R_pitch));
+
+                let vec_right = [R_new[0][0], R_new[1][0], R_new[2][0]];
+                let vec_forward = [R_new[0][2], R_new[1][2], R_new[2][2]];
+
+                let forward_flat = [vec_forward[0], 0, vec_forward[2]];
+                let right_flat = [vec_right[0], 0, vec_right[2]];
+
+                let f_norm = Math.sqrt(forward_flat[0]**2 + forward_flat[1]**2 + forward_flat[2]**2);
+                let r_norm = Math.sqrt(right_flat[0]**2 + right_flat[1]**2 + right_flat[2]**2);
+
+                if (f_norm > 0) {
+                    forward_flat = [forward_flat[0]/f_norm, forward_flat[1]/f_norm, forward_flat[2]/f_norm];
+                }
+                if (r_norm > 0) {
+                    right_flat = [right_flat[0]/r_norm, right_flat[1]/r_norm, right_flat[2]/r_norm];
+                }
+
+                let move_vec = [0, 0, 0];
+                if (keys.has('w')) {
+                    move_vec[0] += forward_flat[0] * this.move_speed;
+                    move_vec[1] += forward_flat[1] * this.move_speed;
+                    move_vec[2] += forward_flat[2] * this.move_speed;
+                }
+                if (keys.has('s')) {
+                    move_vec[0] -= forward_flat[0] * this.move_speed;
+                    move_vec[1] -= forward_flat[1] * this.move_speed;
+                    move_vec[2] -= forward_flat[2] * this.move_speed;
+                }
+                if (keys.has('d')) {
+                    move_vec[0] += right_flat[0] * this.move_speed;
+                    move_vec[1] += right_flat[1] * this.move_speed;
+                    move_vec[2] += right_flat[2] * this.move_speed;
+                }
+                if (keys.has('a')) {
+                    move_vec[0] -= right_flat[0] * this.move_speed;
+                    move_vec[1] -= right_flat[1] * this.move_speed;
+                    move_vec[2] -= right_flat[2] * this.move_speed;
+                }
+
+                let T_new = [T[0] + move_vec[0], T[1] + move_vec[1], T[2] + move_vec[2]];
+
+                this.current_c2w = [
+                    [R_new[0][0], R_new[0][1], R_new[0][2], T_new[0]],
+                    [R_new[1][0], R_new[1][1], R_new[1][2], T_new[1]],
+                    [R_new[2][0], R_new[2][1], R_new[2][2], T_new[2]],
+                    [0, 0, 0, 1]
+                ];
+
+                this.history.push(JSON.parse(JSON.stringify(this.current_c2w)));
+            }
+        }
+
+        // --- DSL Parser & Generator helper ---
+        function parseDSL(actionString) {
+            if (!actionString) return [];
+            let normalized = actionString.replace(/，/g, ",").replace(/\s/g, "");
+            let segments = normalized.split(",");
+            let frameKeysList = [];
+            for (let part of segments) {
+                if (!part) continue;
+                if (!part.includes("-")) {
+                    alert(`Invalid segment: ${part}`);
+                    return [];
+                }
+                let dashIdx = part.lastIndexOf("-");
+                let keysPart = part.substring(0, dashIdx).toLowerCase();
+                let durationStr = part.substring(dashIdx + 1);
+                let duration = parseInt(durationStr);
+                if (isNaN(duration) || duration <= 0) {
+                    alert(`Invalid duration: ${durationStr}`);
+                    return [];
+                }
+
+                let keys = new Set();
+                if (keysPart !== "none") {
+                    for (let c of keysPart) {
+                        if ("wasdijkl".includes(c)) {
+                            keys.add(c);
+                        } else {
+                            alert(`Invalid key character: ${c}`);
+                            return [];
+                        }
+                    }
+                }
+                for (let i = 0; i < duration; i++) {
+                    frameKeysList.push(keys);
+                }
+            }
+            return frameKeysList;
+        }
+
+        function generateDSL(frameKeysList) {
+            if (frameKeysList.length === 0) return "";
+            let segments = [];
+            let currentKeys = frameKeysList[0];
+            let duration = 0;
+
+            const keysEqual = (s1, s2) => {
+                if (s1.size !== s2.size) return false;
+                for (let v of s1) if (!s2.has(v)) return false;
+                return true;
+            };
+
+            const getKeysStr = (set) => {
+                if (set.size === 0) return "none";
+                return Array.from(set).sort().join("");
+            };
+
+            for (let keys of frameKeysList) {
+                if (keysEqual(keys, currentKeys)) {
+                    duration++;
+                } else {
+                    segments.push(`${getKeysStr(currentKeys)}-${duration}`);
+                    currentKeys = keys;
+                    duration = 1;
+                }
+            }
+            segments.push(`${getKeysStr(currentKeys)}-${duration}`);
+            return segments.join(",");
+        }
+
+        // --- Application State ---
+        let isRecording = false;
+        let activeKeys = new Set();
+        let frameKeysList = [];
+        let simulator = new TrajectorySimulator();
+        let intervalTimer = null;
+
+        // UI Elements
+        const btnRecord = document.getElementById('btn-record');
+        const btnClear = document.getElementById('btn-clear');
+        const btnParseDSL = document.getElementById('btn-parse-dsl');
+        const btnExport = document.getElementById('btn-export');
+        const dslOutput = document.getElementById('dsl-output');
+        const statFrames = document.getElementById('stat-frames');
+        const statPad = document.getElementById('stat-pad');
+        const recordDot = document.getElementById('record-dot');
+        const timeline = document.getElementById('timeline');
+        const timelineIndex = document.getElementById('timeline-index');
+
+        // Capture keyboard inputs
+        const targetKeys = ['w','a','s','d','i','j','k','l'];
+        window.addEventListener('keydown', (e) => {
+            let k = e.key.toLowerCase();
+            if (targetKeys.includes(k)) {
+                activeKeys.add(k);
+                document.getElementById(`key-${k}`).classList.add('active');
+                e.preventDefault();
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            let k = e.key.toLowerCase();
+            if (targetKeys.includes(k)) {
+                activeKeys.delete(k);
+                document.getElementById(`key-${k}`).classList.remove('active');
+                e.preventDefault();
+            }
+        });
+
+        btnRecord.addEventListener('click', () => {
+            if (isRecording) {
+                stopRecording();
+            } else {
+                startRecording();
+            }
+        });
+
+        function startRecording() {
+            isRecording = true;
+            btnRecord.textContent = "Stop Recording";
+            btnRecord.classList.add('btn-danger');
+            recordDot.classList.add('recording');
+            
+            intervalTimer = setInterval(() => {
+                let snap = new Set(activeKeys);
+                frameKeysList.push(snap);
+                simulator.step(snap);
+                updateStats();
+                requestRender();
+            }, 62.5);
+        }
+
+        function stopRecording() {
+            isRecording = false;
+            btnRecord.textContent = "Start Recording";
+            btnRecord.classList.remove('btn-danger');
+            recordDot.classList.remove('recording');
+            clearInterval(intervalTimer);
+            
+            dslOutput.value = generateDSL(frameKeysList);
+        }
+
+        btnClear.addEventListener('click', () => {
+            if (isRecording) stopRecording();
+            frameKeysList = [];
+            simulator.reset();
+            dslOutput.value = "";
+            updateStats();
+            requestRender();
+        });
+
+        btnParseDSL.addEventListener('click', () => {
+            let list = parseDSL(dslOutput.value);
+            if (list.length > 0) {
+                frameKeysList = list;
+                recalculateTrajectory();
+                updateStats();
+                requestRender();
+                showToast("Action string applied!");
+            }
+        });
+
+        function recalculateTrajectory() {
+            simulator.reset();
+            for (let keys of frameKeysList) {
+                simulator.step(keys);
+            }
+        }
+
+        function getPaddedFramesCount(n) {
+            if (n <= 0) return 1;
+            let remainder = (n - 1) % 4;
+            if (remainder === 0) return n;
+            return n + (4 - remainder);
+        }
+
+        function updateStats() {
+            let framesCount = frameKeysList.length;
+            statFrames.textContent = framesCount;
+            statPad.textContent = getPaddedFramesCount(framesCount);
+            timeline.max = Math.max(0, simulator.history.length - 1);
+            timelineIndex.textContent = `${timeline.value} / ${timeline.max}`;
+        }
+
+        timeline.addEventListener('input', () => {
+            timelineIndex.textContent = `${timeline.value} / ${timeline.max}`;
+            requestRender();
+        });
+
+        // --- Pure HTML5 Canvas 3D Rendering (Zero Dependency) ---
+        const canvas = document.getElementById('viewport');
+        const ctx = canvas.getContext('2d');
+
+        // View orbit settings
+        let viewYaw = -0.6;
+        let viewPitch = 0.5;
+        let zoom = 120;
+        let panX = 0, panY = 0;
+
+        function resizeCanvas() {
+            canvas.width = canvas.parentElement.clientWidth;
+            canvas.height = canvas.parentElement.clientHeight;
+            requestRender();
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        setTimeout(resizeCanvas, 100);
+
+        // Project 3D point to 2D screen coordinate
+        function project(x, y, z) {
+            // Apply Viewport Yaw
+            let cosY = Math.cos(viewYaw), sinY = Math.sin(viewYaw);
+            let x1 = x * cosY - z * sinY;
+            let z1 = x * sinY + z * cosY;
+
+            // Apply Viewport Pitch
+            let cosP = Math.cos(viewPitch), sinP = Math.sin(viewPitch);
+            let y2 = y * cosP - z1 * sinP;
+            let z2 = y * sinP + z1 * cosP;
+
+            // Add distance/perspective offset
+            let dist = z2 + 8.0;
+            if (dist <= 0.1) dist = 0.1;
+
+            let scale = zoom / dist;
+            return {
+                x: canvas.width / 2 + x1 * scale + panX,
+                y: canvas.height / 2 - y2 * scale + panY,
+                visible: z2 > -7.5
+            };
+        }
+
+        function requestRender() {
+            // Clear canvas
+            ctx.fillStyle = '#020617';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw a subtle 3D Grid on the ground plane (Y = 0)
+            ctx.strokeStyle = 'rgba(6, 182, 212, 0.08)';
+            ctx.lineWidth = 1;
+            for (let i = -10; i <= 10; i++) {
+                // Line parallel to Z
+                let p1 = project(i, 0, -10);
+                let p2 = project(i, 0, 10);
+                if (p1.visible && p2.visible) {
+                    ctx.beginPath();
+                    ctx.moveTo(p1.x, p1.y);
+                    ctx.lineTo(p2.x, p2.y);
+                    ctx.stroke();
+                }
+
+                // Line parallel to X
+                let p3 = project(-10, 0, i);
+                let p4 = project(10, 0, i);
+                if (p3.visible && p4.visible) {
+                    ctx.beginPath();
+                    ctx.moveTo(p3.x, p3.y);
+                    ctx.lineTo(p4.x, p4.y);
+                    ctx.stroke();
+                }
+            }
+
+            // Draw axis markers (RGB: Red=X, Green=Y, Blue=Z)
+            const axisLength = 1.0;
+            let origin = project(0,0,0);
+            let xAxis = project(axisLength, 0, 0);
+            let yAxis = project(0, axisLength, 0);
+            let zAxis = project(0, 0, axisLength);
+
+            if (origin.visible) {
+                // X Axis (Red)
+                if (xAxis.visible) {
+                    ctx.strokeStyle = '#ef4444';
+                    ctx.lineWidth = 2.5;
+                    ctx.beginPath(); ctx.moveTo(origin.x, origin.y); ctx.lineTo(xAxis.x, xAxis.y); ctx.stroke();
+                }
+                // Y Axis (Green)
+                if (yAxis.visible) {
+                    ctx.strokeStyle = '#10b981';
+                    ctx.lineWidth = 2.5;
+                    ctx.beginPath(); ctx.moveTo(origin.x, origin.y); ctx.lineTo(yAxis.x, yAxis.y); ctx.stroke();
+                }
+                // Z Axis (Blue)
+                if (zAxis.visible) {
+                    ctx.strokeStyle = '#3b82f6';
+                    ctx.lineWidth = 2.5;
+                    ctx.beginPath(); ctx.moveTo(origin.x, origin.y); ctx.lineTo(zAxis.x, zAxis.y); ctx.stroke();
+                }
+            }
+
+            // Draw Trajectory line (Cyan)
+            if (simulator.history.length > 1) {
+                ctx.strokeStyle = '#06b6d4';
+                ctx.lineWidth = 3;
+                ctx.shadowColor = 'rgba(6, 182, 212, 0.4)';
+                ctx.shadowBlur = 8;
+                ctx.beginPath();
+                
+                let first = true;
+                for (let mat of simulator.history) {
+                    let p = project(mat[0][3], -mat[1][3], mat[2][3]); // invert Y for presentation
+                    if (p.visible) {
+                        if (first) {
+                            ctx.moveTo(p.x, p.y);
+                            first = false;
+                        } else {
+                            ctx.lineTo(p.x, p.y);
+                        }
+                    }
+                }
+                ctx.stroke();
+                ctx.shadowBlur = 0; // Reset shadow
+            }
+
+            // Draw Camera Frustum Cone at selected frame index
+            let currentIndex = parseInt(timeline.value);
+            if (currentIndex >= 0 && currentIndex < simulator.history.length) {
+                let mat = simulator.history[currentIndex];
+                let px = mat[0][3];
+                let py = -mat[1][3];
+                let pz = mat[2][3];
+
+                // Camera local axes
+                let right = [mat[0][0], -mat[1][0], mat[2][0]];
+                let up = [mat[0][1], -mat[1][1], mat[2][1]];
+                let forward = [mat[0][2], -mat[1][2], mat[2][2]];
+
+                // Create corners of the camera frustum cone
+                const scale = 0.25;
+                let c_origin = project(px, py, pz);
+                let c_fl = project(px + forward[0]*scale*2 - right[0]*scale + up[0]*scale, py + forward[1]*scale*2 - right[1]*scale + up[1]*scale, pz + forward[2]*scale*2 - right[2]*scale + up[2]*scale);
+                let c_fr = project(px + forward[0]*scale*2 + right[0]*scale + up[0]*scale, py + forward[1]*scale*2 + right[1]*scale + up[1]*scale, pz + forward[2]*scale*2 + right[2]*scale + up[2]*scale);
+                let c_bl = project(px + forward[0]*scale*2 - right[0]*scale - up[0]*scale, py + forward[1]*scale*2 - right[1]*scale - up[1]*scale, pz + forward[2]*scale*2 - right[2]*scale - up[2]*scale);
+                let c_br = project(px + forward[0]*scale*2 + right[0]*scale - up[0]*scale, py + forward[1]*scale*2 + right[1]*scale - up[1]*scale, pz + forward[2]*scale*2 + right[2]*scale - up[2]*scale);
+
+                if (c_origin.visible) {
+                    ctx.strokeStyle = '#a855f7';
+                    ctx.lineWidth = 2;
+                    ctx.fillStyle = 'rgba(168, 85, 247, 0.2)';
+
+                    // Draw frustum lines
+                    ctx.beginPath();
+                    ctx.moveTo(c_origin.x, c_origin.y); ctx.lineTo(c_fl.x, c_fl.y);
+                    ctx.moveTo(c_origin.x, c_origin.y); ctx.lineTo(c_fr.x, c_fr.y);
+                    ctx.moveTo(c_origin.x, c_origin.y); ctx.lineTo(c_bl.x, c_bl.y);
+                    ctx.moveTo(c_origin.x, c_origin.y); ctx.lineTo(c_br.x, c_br.y);
+                    ctx.stroke();
+
+                    // Draw screen rectangle
+                    ctx.beginPath();
+                    ctx.moveTo(c_fl.x, c_fl.y);
+                    ctx.lineTo(c_fr.x, c_fr.y);
+                    ctx.lineTo(c_br.x, c_br.y);
+                    ctx.lineTo(c_bl.x, c_bl.y);
+                    ctx.closePath();
+                    ctx.stroke();
+                    ctx.fill();
+
+                    // Forward vector line
+                    let c_forward_tip = project(px + forward[0]*scale*3, py + forward[1]*scale*3, pz + forward[2]*scale*3);
+                    if (c_forward_tip.visible) {
+                        ctx.strokeStyle = '#3b82f6';
+                        ctx.beginPath();
+                        ctx.moveTo(c_origin.x, c_origin.y);
+                        ctx.lineTo(c_forward_tip.x, c_forward_tip.y);
+                        ctx.stroke();
+                    }
+                }
+            }
+        }
+
+        // Drag to rotate viewport logic
+        let isDragging = false;
+        let lastMouseX = 0, lastMouseY = 0;
+
+        canvas.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            lastMouseX = e.clientX;
+            lastMouseY = e.clientY;
+        });
+
+        window.addEventListener('mouseup', () => {
+            isDragging = false;
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                let dx = e.clientX - lastMouseX;
+                let dy = e.clientY - lastMouseY;
+                viewYaw += dx * 0.007;
+                viewPitch -= dy * 0.007;
+                // Clamp pitch
+                viewPitch = Math.max(-Math.PI/2.1, Math.min(Math.PI/2.1, viewPitch));
+                lastMouseX = e.clientX;
+                lastMouseY = e.clientY;
+                requestRender();
+            }
+        });
+
+        // Zoom viewport
+        canvas.addEventListener('wheel', (e) => {
+            zoom -= e.deltaY * 0.08;
+            zoom = Math.max(10, Math.min(600, zoom));
+            requestRender();
+            e.preventDefault();
+        }, { passive: false });
+
+        // Touch support for mobile/trackpad drag
+        canvas.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 1) {
+                isDragging = true;
+                lastMouseX = e.touches[0].clientX;
+                lastMouseY = e.touches[0].clientY;
+            }
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            if (isDragging && e.touches.length === 1) {
+                let dx = e.touches[0].clientX - lastMouseX;
+                let dy = e.touches[0].clientY - lastMouseY;
+                viewYaw += dx * 0.007;
+                viewPitch -= dy * 0.007;
+                lastMouseX = e.touches[0].clientX;
+                lastMouseY = e.touches[0].clientY;
+                requestRender();
+                e.preventDefault();
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', () => {
+            isDragging = false;
+        });
+
+        // --- Export & UI Code ---
+        function showToast(message, isError = false) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            if (isError) {
+                toast.classList.add('error');
+            } else {
+                toast.classList.remove('error');
+            }
+            toast.classList.add('show');
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+
+        // Preset paths configuration
+        const presets = {
+            soaring: "w-20,j-10,s-15,l-10,w-15,i-8,s-10,k-8",
+            zoom: "w-45",
+            spiral: "w-10,i-5,l-10,w-10,i-5,l-10,w-10,i-5,l-10,w-10,i-5,l-10",
+            circle: "w-10,l-10,w-10,l-10,w-10,l-10,w-10,l-10,w-10,l-10,w-10,l-10"
+        };
+
+        window.loadPreset = function(name) {
+            if (isRecording) stopRecording();
+            let dsl = presets[name];
+            if (dsl) {
+                dslOutput.value = dsl;
+                let list = parseDSL(dsl);
+                if (list.length > 0) {
+                    frameKeysList = list;
+                    recalculateTrajectory();
+                    updateStats();
+                    timeline.value = timeline.max;
+                    requestRender();
+                    showToast(`${name.charAt(0).toUpperCase() + name.slice(1)} preset loaded!`);
+                }
+            }
+        };
+
+        // Load default soaring path on start
+        window.addEventListener('DOMContentLoaded', () => {
+            loadPreset('soaring');
+        });
+
+        btnExport.addEventListener('click', () => {
+            if (frameKeysList.length === 0) {
+                showToast("Cannot export empty trajectory!", true);
+                return;
+            }
+
+            const exportPath = document.getElementById('export-path').value.trim();
+            const actionString = dslOutput.value || generateDSL(frameKeysList);
+            const paddedFrames = getPaddedFramesCount(frameKeysList.length);
+
+            btnExport.disabled = true;
+            btnExport.textContent = "Exporting...";
+
+            fetch('/api/export', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    target_dir: exportPath,
+                    action_string: actionString,
+                    frame_num: paddedFrames
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                btnExport.disabled = false;
+                btnExport.textContent = "Export Arrays (NPY)";
+                if (data.status === 'success') {
+                    showToast("Trajectory files exported successfully!");
+                    document.getElementById('export-status').innerHTML = `
+                        Saved files to: <strong>${data.output_dir}</strong><br>
+                        Run command:<br>
+                        <code style="display:block; background:rgba(0,0,0,0.5); padding:0.4rem; margin-top:0.25rem; font-family:var(--font-code); color:var(--primary); font-size:0.7rem; word-break:break-all;">
+                            python generate.py --ckpt_dir lingbot-world-base-cam --image ${data.output_dir}/image.jpg --action_path ${data.output_dir} --allow_act2cam --frame_num ${paddedFrames}
+                        </code>
+                    `;
+                } else {
+                    showToast(data.message || "Failed to export files.", true);
+                }
+            })
+            .catch(err => {
+                btnExport.disabled = false;
+                btnExport.textContent = "Export Arrays (NPY)";
+                showToast("Network error or server down.", true);
+                console.error(err);
+            });
+        });
+    </script>
+</body>
+</html>
